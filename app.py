@@ -159,6 +159,18 @@ def encode_and_predict(input_dict):
     for col, mapping in enc_map.items():
         row[col] = row[col].map(mapping)
 
+        # Fail fast if user selected an unexpected category
+        if row[col].isna().any():
+            valid_vals = list(mapping.keys())
+            invalid_val = input_dict.get(col)
+            raise ValueError(
+                f"Invalid value for '{col}': {invalid_val!r}. "
+                f"Expected one of: {valid_vals}"
+            )
+
+    # Ensure numeric types are valid before scaling
+    row[SCALE_COLS] = row[SCALE_COLS].astype(float)
+
     # Scale numeric columns
     row[SCALE_COLS] = scaler.transform(row[SCALE_COLS])
 
@@ -166,6 +178,7 @@ def encode_and_predict(input_dict):
     pred  = model.predict(row)[0]
     proba = model.predict_proba(row)[0]
     return pred, proba
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -210,13 +223,8 @@ st.markdown("""
   <p>ML-powered dashboard · Random Forest Classifier · Enter booking details in the sidebar to predict cancellation risk</p>
 </div>
 """, unsafe_allow_html=True)
-
-# ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs(["📊 Overview", "🔮 Prediction", "📈 Analytics"])
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 – OVERVIEW
-# ══════════════════════════════════════════════════════════════════════════════
 with tab1:
     total        = len(df)
     canceled     = (df['booking_status'] == 'Canceled').sum()
@@ -370,8 +378,23 @@ with tab2:
         }
 
         pred, proba = encode_and_predict(input_data)
-        cancel_prob    = proba[0] * 100   # class 0 = Canceled
-        no_cancel_prob = proba[1] * 100   # class 1 = Not_Canceled
+
+        # Map probabilities to class labels robustly (do not assume proba[0] == Canceled)
+        classes = list(model.classes_)
+        # Dataset labels in this project are: 0 => Canceled, 1 => Not_Canceled (but keep it robust)
+        cancel_class = 0
+        not_cancel_class = 1
+
+        if cancel_class in classes and not_cancel_class in classes:
+            cancel_idx = classes.index(cancel_class)
+            not_cancel_idx = classes.index(not_cancel_class)
+            cancel_prob = float(proba[cancel_idx]) * 100
+            no_cancel_prob = float(proba[not_cancel_idx]) * 100
+        else:
+            # Fallback to old behavior
+            cancel_prob = float(proba[0]) * 100
+            no_cancel_prob = float(proba[1]) * 100
+
 
         pc1, pc2 = st.columns([1, 1])
 
